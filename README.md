@@ -1,3 +1,160 @@
+# JXWAF安全模型服务
+
+## 介绍
+
+基于多维稀疏注意力机制的大模型语义缓存系统，通过在线蒸馏获得大模型的安全检测能力，实现**高并发、低成本、低幻觉**的安全模型服务。目前已上线 **Web 安全检测模型**，可精准识别 SQL 注入、XSS、命令执行等 Web 攻击，后续将陆续推出更多安全模型。
+
+## 快速上手
+
+### 1. 访问控制台
+浏览器打开 `https://model.jxwaf.com`。首次使用需注册账号，**强烈建议开启 OTP 双因素认证**以增强账户安全。
+
+### 2. 配置 AI 模型
+进入「AI 模型配置」页面：
+- 选择模型（如 `deepseek-v4-flash`）
+- 填入 DeepSeek API Key，支持一键验证有效性
+- 按需开关「思考模式」：开启时 AI 执行深度推理链，准确率更高；关闭时速度更快、成本更低
+
+### 3. 生成 API Key
+进入「API 密钥管理」页面创建 Key，输入标识名后系统生成唯一密钥。
+
+### 4. 第一次调用
+```bash
+curl -X POST https://model.jxwaf.com/jxwaf_model/web_attack_check \
+  -H "Content-Type: application/json" \
+  -H "jxwaf-model-auth: <你的API Key>" \
+  -d "id=1' OR '1'='1"
+```
+首次提交会返回 `unknown`，等待大约 5 秒后重试即可获取分析结果（开启思考模式则 1 分钟后能有结果）。
+
+---
+
+## 私有化部署
+
+### 环境要求
+- **操作系统**：Debian 12.x
+- **端口**：确保 80、443、3306 端口未被占用
+
+### 部署步骤
+
+**1. 安装 Docker**
+```bash
+curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+```
+
+**2. 获取部署文件**
+```bash
+git clone https://github.com/jx-sec/jxwaf.git
+```
+
+**3. 启动服务**
+```bash
+cd jxwaf/jxwaf_model_platform
+docker compose up -d
+```
+
+### 配置说明
+
+项目仓库已包含 `docker-compose.yml`，按需修改以下核心配置：
+
+| 配置项 | 说明 |
+|--------|------|
+| `AUTH_CODE` | 授权码，测试用授权码过期时间 2026-12-31 |
+| `MYSQL_PASSWORD` | MySQL 密码，`jxwaf_model_platform` 和 `mysql` 服务**两处必须一致**，建议修改为强密码 |
+| `PLATFORMS` → `deepseek.api_key` | DeepSeek API Key，用于调用 AI 分析，**仅对演示页面生效** |
+| `PLATFORMS` → `deepseek.thinking_type` | `enabled` 开启深度推理（更准）；`disabled` 关闭（更快、成本更低），**仅对演示页面生效** |
+| `IP_RATE_LIMIT` | 单 IP 24 小时内最大请求次数，超过则临时封禁，默认 `1000`，**仅对演示页面生效** |
+| `ANALYSIS_COUNT` | 多轮投票次数，默认 `3` 次独立分析 |
+| `ENABLE_TLS` | 是否启用 HTTPS，开启后需挂载 SSL 证书 |
+
+> 修改配置后执行 `docker compose down && docker compose up -d` 重启生效。
+
+---
+
+## Web 攻击检测 API
+
+### 基本信息
+- **方法**：`POST`
+- **地址**：`/jxwaf_model/web_attack_check`
+- **认证**：请求头 `jxwaf-model-auth` 传入 API Key
+
+### 请求示例
+```bash
+curl -X POST https://model.jxwaf.com/jxwaf_model/web_attack_check \
+  -H "Content-Type: application/json" \
+  -H "jxwaf-model-auth: <你的API Key>" \
+  -d "id=1' OR '1'='1"
+```
+
+### 响应示例
+
+**判定为攻击：**
+```json
+{
+  "status": "ok",
+  "result": "attack",
+  "token": "a1b2c3d4e5f6...",
+  "ai_model": "deepseek-v4-flash",
+  "attack_type": ["sql", "rce"]
+}
+```
+
+**判定为安全：**
+```json
+{
+  "status": "ok",
+  "result": "safe",
+  "token": "a1b2c3d4e5f6...",
+  "ai_model": ""
+}
+```
+
+**待分析（首次提交）：**
+```json
+{
+  "status": "ok",
+  "result": "unknown",
+  "token": "a1b2c3d4e5f6...",
+  "ai_model": ""
+}
+```
+
+**认证失败：**
+```json
+{
+  "status": "error",
+  "result": "auth_fail"
+}
+```
+
+### 响应字段说明
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `status` | string | `ok` – 请求成功；`error` – 请求失败 |
+| `result` | string | `safe` – 安全；`attack` – 攻击；`unknown` – 待分析（后台异步处理中）；`auth_fail` – 认证失败 |
+| `token` | string | 请求内容的唯一哈希标识，可用于日志追踪或二次查询 |
+| `ai_model` | string | 返回 `attack`/`safe` 时，展示所用 AI 模型名称；否则为空 |
+| `attack_type` | array | 仅在 `result=attack` 时返回，列出命中的攻击类型 |
+
+### 攻击类型
+
+平台当前支持 7 类 Web 攻击：
+
+| 标识 | 名称 | 典型特征 |
+|------|------|----------|
+| `sql` | SQL 注入 | `' OR '1'='1`、`UNION SELECT` |
+| `xss` | 跨站脚本 | `<script>alert(1)</script>` |
+| `rce` | 远程命令执行 | `; ls`、`$(whoami)` |
+| `code_exec` | 任意代码执行 | SSTI、OGNL/SpEL 表达式 |
+| `path_traversal` | 路径遍历 | `../../etc/passwd` |
+| `xxe` | XML 外部实体注入 | 利用 XML 解析器读取文件或发起 SSRF |
+| `other` | 其他攻击 | SSRF、NoSQL 注入、CRLF 注入等 |
+
+> **最佳实践**：收到 `unknown` 后，建议客户端间隔 5 秒重试 1 次。重试不产生额外 AI 调用费用。
+
+---
+
 # JXWAF
 
 ## 介绍
@@ -12,13 +169,13 @@ JXWAF6 标准版是一款基于 AI 大模型的 Web 应用防火墙。
 - 网站防护
   - 网站接入
   - 证书管理
-- AI防护配置
-  - Web安全防护
-  - AI分析记录
+- AI 防护配置
+  - Web 安全防护
+  - AI 分析记录
 - 防护配置
-  - Web防护规则
+  - Web 防护规则
   - 流量防护规则
-  - IP区域封禁
+  - IP 区域封禁
   - 白名单规则
 - 防护组件
 - 节点状态
