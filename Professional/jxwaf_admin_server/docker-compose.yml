@@ -40,6 +40,7 @@ services:
       WAF_UPDATE_CONF_DATA_SIZE: "100m"
       CONF_DATA_SIZE: "100m"
       MODEL_DATA_SIZE: "100m"
+      OPEN_REGIST: "false"
       TZ: Asia/Shanghai
     # 如需启用 HTTPS，取消下面注释并放置证书文件
     #volumes:
