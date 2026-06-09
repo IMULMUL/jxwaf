@@ -25,7 +25,7 @@ services:
 
   jxlog:
     container_name: jxlog
-    image: "ccr.ccs.tencentyun.com/jxwaf/jxlog_professional:1.0"
+    image: "ccr.ccs.tencentyun.com/jxwaf/jxlog_professional:1.1"
     ports:
       - "8877:8877"
     environment:
@@ -40,7 +40,7 @@ services:
       BATCH_WAIT_TIMEOUT: 3
       TTL_DAYS: 30
       ENGINE: MergeTree
-      TZ: Asia/Shanghai
+      TIMEZONE: Asia/Shanghai
     depends_on:
       - clickhouse
     restart: unless-stopped
